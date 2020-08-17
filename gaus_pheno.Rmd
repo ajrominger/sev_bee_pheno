@@ -1,0 +1,193 @@
+---
+title: "Function to estimate phenology as a multi-modal Gaussian curve"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, fig.width = 5, fig.height = 5)
+```
+
+## Gaussian curve
+
+Let's get familiar with the shape and parameters of a Gaussian curve with one peak:
+$$
+f(x) = a_1 \exp{\left(-\frac{(x - a_2)^2}{2 a_3^2}\right)}
+$$
+
+The parameter $a_1$ determines the maximum height of the curve. The parameter $a_2$ determines the location of the peak. The parameter $a_3$ determines how wide (larger value of $a_3$) or skinny (smaller $a_3$) the curve is.
+
+Let's make a funciton for this curve and plot it
+
+```{r gaus}
+gaus <- function(x, a1, a2, a3) {
+    a1 * exp(-(x - a2)^2 / (2 * a3)^2)
+}
+
+x <- -7:7
+y <- gaus(x, 20, 0, 2)
+plot(x, y)
+```
+
+Now let's make a bi-modal Gaussian curve.  This is simply a funciton of two Gaussian curves added together, each with it's own set of parameters, say $a_1, a_2, a_3$ for the first curve, and $b_1, b_2, b_3$ for the second
+
+```{r gaus2}
+gaus2 <- function(x, a1, a2, a3, b1, b2, b3) {
+    a1 * exp(-(x - a2)^2 / (2 * a3)^2) + b1 * exp(-(x - b2)^2 / (2 * b3)^2)
+}
+
+x <- -7:7
+y <- gaus2(x, 20, -4, 0.5, 15, 4, 1)
+plot(x, y)
+```
+
+
+## Bi-modal Gaussian data with noise
+
+Our data will not be smooth like that, instead there will be noise. We can make a first attempt of modeling that noise with a Poisson distribution.  This means that for every `x` value, the `y` response will actual be a random number drawn from a Poisson distribution whose mean value comes from the bi-model Gaussian curve.  We can simulate data following that idea with an approach like this:
+
+```{r gaus_pois_sim}
+# create realistic calendar sampling times, centered on mid-June
+x <- rep((1:12) - 6.5, each = 6)
+
+# for convenience, make a vector of our parameters a1, a2, a3, b1, b2, b3
+p <- c(20, -2, 0.5, 20, 2, 0.5)
+
+# now make the mean values for the y variable
+ymean <- gaus2(x, p[1], p[2], p[3], p[4], p[5], p[6])
+
+# finally, simulate real data 
+y <- rpois(length(ymean), ymean)
+
+plot(x, y)
+```
+
+
+## Fitting the curve to real data with noise
+
+To fit the bi-model curve to these kind of real data, we need to define a log likelihood function and maximize it.  We will actually make a **negative** log likelihood function and **minimize** it, but those tasks are equivalent, computers just prefer to minimize things.  We will be usign the package *gnlm* to do this negative log likelihood minimization. Before proceeding, make sure that package is installed with `install.packages('gnlm')`.
+
+The model we've been building toward assumes there is a bi-model Gaussian curve with a potential early season peak and late season peak. The resulting data are assumed to come from a Poisson distribution.  Taking that info together, we can make a negative log likelihood function that looks something like this:
+
+```{r gaus2LogLik_draft1, eval = FALSE}
+gaus2LogLik <- function(p) {
+    a1 <- p[1]
+    a2 <- p[2]
+    a3 <- p[3]
+    b1 <- p[4]
+    b2 <- p[5]
+    b3 <- p[6]
+    
+    mu <- gaus2(x, a1, a2, a3, b1, b2, b3)
+    
+    return(-sum(dpois(y, mu, log = TRUE)))
+}
+```
+
+A couple things to note about this function: we pass it one argument, `p` because that's how the package *gnlm* wants it to be. We also assume that the objects `x` and `y` **already exist** in our working environment, which is why we can use them inside the function without passing them to the function as arguments.  This is not great coding practice, but it's now the functions in *gnlm* were designed to work.
+
+With those caveats in mind, what we're doing in this function is very simple: after splitting up our vector `p` into the necessary parameters `a1`, `a2`, `a3`, `b1`, `b2`, `b3`, we then create a vector of mean values (`mu`) and then pass that to the Poisson distribution function `dpois`. What we return is the negative sum of the log values of the Poisson distribution function.
+
+That's it!  That's the negative log likelihood function.
+
+But before using it, we need to do a few things.  The optimization will have a hard time with the fact that in real life all the parameters `a1`, `a2`, `a3`, `b1`, `b2`, `b3` need to be positive, but the optimizer will naively try negative values.  We can force it to only work in the positive domain by using the `exp` function like this:
+
+```{r gaus2LogLik_draft2, eval = FALSE}
+gaus2LogLik <- function(p) {
+    p <- exp(p)
+    
+    a1 <- p[1]
+    a2 <- p[2]
+    a3 <- p[3]
+    b1 <- p[4]
+    b2 <- p[5]
+    b3 <- p[6]
+    
+    mu <- gaus2(x, a1, a2, a3, b1, b2, b3)
+    
+    return(-sum(dpois(y, mu, log = TRUE)))
+}
+```
+
+That's very close to what we need, but the optimizer will have a hard time with one last thing: right now, it doesn't know that we want it to force an early season peak and a late season peak. But we can make it do that.  That's why we centered the `x` values at mid June, i.e. `6.5` (this could be modified to whatever makes sense, e.g. `6.75`). Assuming we've done that kind of centering, we can force the first peak to be before "mid season" by forcing it to always be negative, like this:
+
+```{r gaus2LogLik}
+gaus2LogLik <- function(p) {
+    p <- exp(p)
+    
+    a1 <- p[1]
+    a2 <- -p[2]
+    a3 <- p[3]
+    b1 <- p[4]
+    b2 <- p[5]
+    b3 <- p[6]
+    
+    mu <- gaus2(x, a1, a2, a3, b1, b2, b3)
+    
+    return(-sum(dpois(y, mu, log = TRUE)))
+}
+```
+
+Now we've got it.  Let's test out this function with our simulated data from before:
+
+```{r gaus2LogLik_test}
+# remember, we saved that vector of parameters
+p
+
+# but our new log likelihood function has that funny business with exponentials and 
+# negatives, so let's make a new p to use with the log likelihood (ll) function
+pll <- p
+pll[2] <- -pll[2]
+pll <- log(pll)
+pll
+
+# and remember the data vectors `x` and `y` exist
+x
+y
+
+# so what is the log likelihood at for the parameter values p
+gaus2LogLik(pll)
+
+# compare that to something with different parameter values
+pllWrong <- pll
+pllWrong[c(1, 3, 5)] <- 1
+pllWrong
+
+gaus2LogLik(pllWrong)
+```
+
+The vector of parameters `pllWrong` is "wrong" in the sense that those were not the parameter values used to simulate the data `y`. So if everything is working right, the negative log likelihood should be **bigger** for the wrong values, and it is.
+
+Now let's use the function `gnlr` from package *gnlm* to optimize the negative log likelihood function for the simulated data. This is exactly what we'll do for real data too! One thing to note, we have to pass `gnlr` a vector of initial guesses for the parameter values, we'll start by using `pll`.
+
+```{r gnlr_sim_pll}
+library(gnlm)
+gnlr(y, dist = gaus2LogLik, pmu = pll)
+
+optim(pllWrong, gaus2LogLik)$par
+```
+
+This returns a lot of information, but one important thing to look at is the info under `Model parameters`. This tells us the model parameter estimates, and excitingly, they're very close to the parameter values (`pll`) that we used to simulate the data.  That tells us our estimation procedure is working.  We should also check that if we supply `gnlr` with a different initial guess, that it still converges on this correct answer.  So let's try using `pllWrong` as our initial guess:
+
+```{r gnlr_sim_pllWrong}
+gnlr(y, dist = gaus2LogLik, pmu = pllWrong)
+```
+
+It gets the same answer under `Model parameters`, so that's great!
+
+We can access the parameter values like this:
+```{r getP}
+mod <- gnlr(y, dist = gaus2LogLik, pmu = pllWrong)
+mod$coefficients
+```
+
+
+Keeping in mind that these estimates are in log units, let's make a little convenience function to put them back into linear units:
+
+```{r getParams}
+getParams <- function(m) {
+    p <- m$coefficients
+    return(exp(p))
+}
+
+getParams(mod)
+```
