@@ -1,6 +1,6 @@
 ---
 title: "Function to estimate phenology as a multi-modal Gaussian curve"
-output: html_document
+output: pdf_document
 ---
 
 ```{r setup, include=FALSE}
@@ -28,7 +28,7 @@ y <- gaus(x, 20, 0, 2)
 plot(x, y)
 ```
 
-Now let's make a bi-modal Gaussian curve.  This is simply a funciton of two Gaussian curves added together, each with it's own set of parameters, say $a_1, a_2, a_3$ for the first curve, and $b_1, b_2, b_3$ for the second
+Now let's make a bi-modal Gaussian curve.  This is simply a funciton of two Gaussian curves added together, each with its own set of parameters, say $a_1, a_2, a_3$ for the first curve, and $b_1, b_2, b_3$ for the second
 
 ```{r gaus2}
 gaus2 <- function(x, a1, a2, a3, b1, b2, b3) {
@@ -64,12 +64,12 @@ plot(x, y)
 
 ## Fitting the curve to real data with noise
 
-To fit the bi-model curve to these kind of real data, we need to define a log likelihood function and maximize it.  We will actually make a **negative** log likelihood function and **minimize** it, but those tasks are equivalent, computers just prefer to minimize things.  We will be usign the package *gnlm* to do this negative log likelihood minimization. Before proceeding, make sure that package is installed with `install.packages('gnlm')`.
+To fit the bi-model curve to these kind of real data, we need to define a log likelihood function and maximize it.  We will actually make a *negative* log likelihood function and *minimize* it, but those tasks are equivalent, computers just prefer to minimize things.  We'll be using the function `optim` to do that minimization (or *optimization*).
 
 The model we've been building toward assumes there is a bi-model Gaussian curve with a potential early season peak and late season peak. The resulting data are assumed to come from a Poisson distribution.  Taking that info together, we can make a negative log likelihood function that looks something like this:
 
 ```{r gaus2LogLik_draft1, eval = FALSE}
-gaus2LogLik <- function(p) {
+gaus2LogLik <- function(p, x, y) {
     a1 <- p[1]
     a2 <- p[2]
     a3 <- p[3]
@@ -83,16 +83,16 @@ gaus2LogLik <- function(p) {
 }
 ```
 
-A couple things to note about this function: we pass it one argument, `p` because that's how the package *gnlm* wants it to be. We also assume that the objects `x` and `y` **already exist** in our working environment, which is why we can use them inside the function without passing them to the function as arguments.  This is not great coding practice, but it's now the functions in *gnlm* were designed to work.
+A couple things to note about this function: we pass it three arguments: `p` is one vector containing all the parameter values (`a1`, `a2`, `a3`, `b1`, `b2`, `b3`) because that's how `optim` wants it to be; the vector `x` of dates samples were taken; and the vector `y` with the counts for one species.
 
-With those caveats in mind, what we're doing in this function is very simple: after splitting up our vector `p` into the necessary parameters `a1`, `a2`, `a3`, `b1`, `b2`, `b3`, we then create a vector of mean values (`mu`) and then pass that to the Poisson distribution function `dpois`. What we return is the negative sum of the log values of the Poisson distribution function.
+In this function first we split up our vector `p` into the necessary parameters `a1`, `a2`, `a3`, `b1`, `b2`, `b3`, we then create a vector of mean values (`mu`) and then pass that to the Poisson distribution function `dpois`. What we return is the negative sum of the log values of the Poisson distribution function.
 
 That's it!  That's the negative log likelihood function.
 
 But before using it, we need to do a few things.  The optimization will have a hard time with the fact that in real life all the parameters `a1`, `a2`, `a3`, `b1`, `b2`, `b3` need to be positive, but the optimizer will naively try negative values.  We can force it to only work in the positive domain by using the `exp` function like this:
 
 ```{r gaus2LogLik_draft2, eval = FALSE}
-gaus2LogLik <- function(p) {
+gaus2LogLik <- function(p, x, y) {
     p <- exp(p)
     
     a1 <- p[1]
@@ -111,7 +111,7 @@ gaus2LogLik <- function(p) {
 That's very close to what we need, but the optimizer will have a hard time with one last thing: right now, it doesn't know that we want it to force an early season peak and a late season peak. But we can make it do that.  That's why we centered the `x` values at mid June, i.e. `6.5` (this could be modified to whatever makes sense, e.g. `6.75`). Assuming we've done that kind of centering, we can force the first peak to be before "mid season" by forcing it to always be negative, like this:
 
 ```{r gaus2LogLik}
-gaus2LogLik <- function(p) {
+gaus2LogLik <- function(p, x, y) {
     p <- exp(p)
     
     a1 <- p[1]
@@ -140,54 +140,77 @@ pll[2] <- -pll[2]
 pll <- log(pll)
 pll
 
-# and remember the data vectors `x` and `y` exist
+# and remember the data vectors `x` and `y` exist (and `x` is centered at 6.5)
 x
 y
 
 # so what is the log likelihood at for the parameter values p
-gaus2LogLik(pll)
+gaus2LogLik(pll, x, y)
 
 # compare that to something with different parameter values
 pllWrong <- pll
 pllWrong[c(1, 3, 5)] <- 1
 pllWrong
 
-gaus2LogLik(pllWrong)
+gaus2LogLik(pllWrong, x, y)
 ```
 
 The vector of parameters `pllWrong` is "wrong" in the sense that those were not the parameter values used to simulate the data `y`. So if everything is working right, the negative log likelihood should be **bigger** for the wrong values, and it is.
 
-Now let's use the function `gnlr` from package *gnlm* to optimize the negative log likelihood function for the simulated data. This is exactly what we'll do for real data too! One thing to note, we have to pass `gnlr` a vector of initial guesses for the parameter values, we'll start by using `pll`.
+Now let's use the function `optim` to minimize the negative log likelihood function for the simulated data. This is exactly what we'll do for real data too! One thing to note, we have to pass `optim` a vector of initial guesses for the parameter values, we'll start by using `pll`.
 
-```{r gnlr_sim_pll}
-library(gnlm)
-gnlr(y, dist = gaus2LogLik, pmu = pll)
-
-optim(pllWrong, gaus2LogLik)$par
+```{r optim_sim_pll}
+optim(pll, gaus2LogLik, x = x, y = y, method = 'BFGS', hessian = TRUE)
 ```
 
-This returns a lot of information, but one important thing to look at is the info under `Model parameters`. This tells us the model parameter estimates, and excitingly, they're very close to the parameter values (`pll`) that we used to simulate the data.  That tells us our estimation procedure is working.  We should also check that if we supply `gnlr` with a different initial guess, that it still converges on this correct answer.  So let's try using `pllWrong` as our initial guess:
+Note really quick how we call this function: first we pass the initial guess `pll`, then the function we optimizing `gaus2LogLik`, and then we also have to tell `optim` the values of the `x` and `y` parameters. Finally, we tell optim to use the `BFGS` optimization method, and we tell it to keep the `hessian` (more on that later).
 
-```{r gnlr_sim_pllWrong}
-gnlr(y, dist = gaus2LogLik, pmu = pllWrong)
+The function `optim` returns a lot of information, all in one list object. The the important things to note are: the element called `$par` gives the maximum likelihood estimates, `$value` gives the optimal negative log likelihood, and `$convergence` tells us if the optimization was successful: a value of `0` is success, any other value is not, you can learn more about the other values in the help doc `?optim`. Excitingly, the model estimates in `$par` are very close to the parameter values (`pll`) that we used to simulate the data.  That tells us our estimation procedure is working.  We should also check that if we supply `optim` with a different initial guess, that it still converges on this correct answer.  So let's try using `pllWrong` as our initial guess:
+
+```{r optim_sim_pllWrong}
+optim(pllWrong, gaus2LogLik, x = x, y = y, method = 'BFGS', hessian = TRUE)
 ```
 
-It gets the same answer under `Model parameters`, so that's great!
-
-We can access the parameter values like this:
-```{r getP}
-mod <- gnlr(y, dist = gaus2LogLik, pmu = pllWrong)
-mod$coefficients
-```
+It gets the same answer so that's great!
 
 
 Keeping in mind that these estimates are in log units, let's make a little convenience function to put them back into linear units:
 
 ```{r getParams}
-getParams <- function(m) {
-    p <- m$coefficients
-    return(exp(p))
+getParams <- function(p) {
+    p <- exp(p)
+    p[2] <- -p[2]
+    
+    return(p)
 }
 
-getParams(mod)
+mod <- optim(pllWrong, gaus2LogLik, x = x, y = y, method = 'BFGS', hessian = TRUE)
+getParams(mod$par)
+```
+
+Lastly, a word on the Hessian.  This is a matrix of partial derivatives of the likelihood function. It can be used to estimate the standard errors and confidence intervals of each parameter.  We won't go into that now, but keep it in mind if we want to incorporate that later.  I wrote a custom package a while back to do that kind of thing (the package is called *socorro*, named after the city, and because it's a package of helper functions).  I'll put the code here for the sake of completeness.  Before running this code, make sure you install the package *devtools*.
+
+
+```{r wald_CI}
+library(devtools)
+
+# check if socorro has already been installed
+socorroCheck <- require(socorro)
+
+# if it hasn't been installed, install it now
+if(!socorroCheck) {
+    install_github('ajrominger/socorro')
+}
+
+library(socorro)
+
+# parameter confidence intervals
+modCI <- wald(mod$par, mod$hessian, alpha = 0.05, marginal = TRUE)
+modCI
+```
+
+Remember, these are in the funny units we use in the optimization. We can convert them to regular units, again using our convenience function `getParams`
+
+```{r param_CI}
+cbind(getParams(modCI[, 1]), getParams(modCI[, 2]))
 ```
