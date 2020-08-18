@@ -28,7 +28,7 @@ y <- gaus(x, 20, 0, 2)
 plot(x, y)
 ```
 
-Now let's make a bi-modal Gaussian curve.  This is simply a funciton of two Gaussian curves added together, each with it's own set of parameters, say $a_1, a_2, a_3$ for the first curve, and $b_1, b_2, b_3$ for the second
+Now let's make a bi-modal Gaussian curve.  This is simply a funciton of two Gaussian curves added together, each with its own set of parameters, say $a_1, a_2, a_3$ for the first curve, and $b_1, b_2, b_3$ for the second
 
 ```{r gaus2}
 gaus2 <- function(x, a1, a2, a3, b1, b2, b3) {
