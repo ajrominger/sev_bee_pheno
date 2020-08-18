@@ -1,6 +1,6 @@
 ---
 title: "Function to estimate phenology as a multi-modal Gaussian curve"
-output: html_document
+output: pdf_document
 ---
 
 ```{r setup, include=FALSE}
@@ -159,15 +159,15 @@ The vector of parameters `pllWrong` is "wrong" in the sense that those were not 
 
 Now let's use the function `optim` to minimize the negative log likelihood function for the simulated data. This is exactly what we'll do for real data too! One thing to note, we have to pass `optim` a vector of initial guesses for the parameter values, we'll start by using `pll`.
 
-```{r gnlr_sim_pll}
+```{r optim_sim_pll}
 optim(pll, gaus2LogLik, x = x, y = y, method = 'BFGS', hessian = TRUE)
 ```
 
 Note really quick how we call this function: first we pass the initial guess `pll`, then the function we optimizing `gaus2LogLik`, and then we also have to tell `optim` the values of the `x` and `y` parameters. Finally, we tell optim to use the `BFGS` optimization method, and we tell it to keep the `hessian` (more on that later).
 
-The function `optim` returns a lot of information, all in one list object. The the important things to note are: the element called `$par` gives the maximum likelihood estimates, `$value` gives the optimal negative log likelihood, and `$convergence` tells us if the optimization was successful: a value of `0` is success, any other value is not, you can learn more about the other values in the help doc `?optim`. Excitingly, the model estimates in `$par` are very close to the parameter values (`pll`) that we used to simulate the data.  That tells us our estimation procedure is working.  We should also check that if we supply `gnlr` with a different initial guess, that it still converges on this correct answer.  So let's try using `pllWrong` as our initial guess:
+The function `optim` returns a lot of information, all in one list object. The the important things to note are: the element called `$par` gives the maximum likelihood estimates, `$value` gives the optimal negative log likelihood, and `$convergence` tells us if the optimization was successful: a value of `0` is success, any other value is not, you can learn more about the other values in the help doc `?optim`. Excitingly, the model estimates in `$par` are very close to the parameter values (`pll`) that we used to simulate the data.  That tells us our estimation procedure is working.  We should also check that if we supply `optim` with a different initial guess, that it still converges on this correct answer.  So let's try using `pllWrong` as our initial guess:
 
-```{r gnlr_sim_pllWrong}
+```{r optim_sim_pllWrong}
 optim(pllWrong, gaus2LogLik, x = x, y = y, method = 'BFGS', hessian = TRUE)
 ```
 
@@ -177,11 +177,40 @@ It gets the same answer so that's great!
 Keeping in mind that these estimates are in log units, let's make a little convenience function to put them back into linear units:
 
 ```{r getParams}
-getParams <- function(m) {
-    p <- m$par
-    return(exp(p))
+getParams <- function(p) {
+    p <- exp(p)
+    p[2] <- -p[2]
+    
+    return(p)
 }
 
 mod <- optim(pllWrong, gaus2LogLik, x = x, y = y, method = 'BFGS', hessian = TRUE)
-getParams(mod)
+getParams(mod$par)
+```
+
+Lastly, a word on the Hessian.  This is a matrix of partial derivatives of the likelihood function. It can be used to estimate the standard errors and confidence intervals of each parameter.  We won't go into that now, but keep it in mind if we want to incorporate that later.  I wrote a custom package a while back to do that kind of thing (the package is called *socorro*, named after the city, and because it's a package of helper functions).  I'll put the code here for the sake of completeness.  Before running this code, make sure you install the package *devtools*.
+
+
+```{r wald_CI}
+library(devtools)
+
+# check if socorro has already been installed
+socorroCheck <- require(socorro)
+
+# if it hasn't been installed, install it now
+if(!socorroCheck) {
+    install_github('ajrominger/socorro')
+}
+
+library(socorro)
+
+# parameter confidence intervals
+modCI <- wald(mod$par, mod$hessian, alpha = 0.05, marginal = TRUE)
+modCI
+```
+
+Remember, these are in the funny units we use in the optimization. We can convert them to regular units, again using our convenience function `getParams`
+
+```{r param_CI}
+cbind(getParams(modCI[, 1]), getParams(modCI[, 2]))
 ```
