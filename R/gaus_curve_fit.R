@@ -1,21 +1,21 @@
-library(reshape2)
+library(data.table)
 
 source('R/gaus.R')
 
-beeSpp <- read.csv('data/Focus_Bees.csv', as.is = TRUE)
+beeSpp <- fread('data/Focus_Bees.csv')
 beeSpp <- unique(beeSpp$code)
-beeAllDat <- read.csv('data/SEVBeeData2002-2015.csv', as.is = TRUE)
+beeAllDat <- fread('data/SEVBeeData2002-2015.csv')
 
 # reshape into long format
 beeAllDat <- melt(beeAllDat, id.vars = c('Month', 'Year', 'Ecosystem', 'Transect', 'Direction', 'Color'),
-                  variable.name = 'spp', value.name = 'abundance')
+                  variable.name = 'spp', value.name = 'abundance', variable.factor = FALSE)
 
 # subset to just focus species
 beeAllDat <- beeAllDat[beeAllDat$spp %in% beeSpp, ]
 
 # make month a factor ranging from 1 to 12 as a trick to create 0 abundances
 # for unsampled months when using `aggregate` below
-beeAllDat$Month <- factor(beeAllDat$Month, levels = 1:12)
+# beeAllDat$Month <- factor(beeAllDat$Month, levels = 1:12)
 
 # sum across `Direction` and `Color`
 beeAllDat <- aggregate(list(abundance = beeAllDat$abundance),
@@ -24,7 +24,7 @@ beeAllDat <- aggregate(list(abundance = beeAllDat$abundance),
 beeAllDat$abundance[is.na(beeAllDat$abundance)] <- 0
 
 # recenter months to mid June
-beeAllDat$Month <- as.integer(beeAllDat$Month)
+# beeAllDat$Month <- as.integer(beeAllDat$Month)
 beeAllDat$Month <- beeAllDat$Month - 6.5
 
 # loop over each species
@@ -45,7 +45,8 @@ plotByMonth <- function(X) {
     m <- sort(unique(x))
 
     n <- sum(x == x[1])
-    plot(c(1, n), c(0, max(y)), type = 'n', log = 'x')
+    plot(c(1, n), c(0, max(y)), type = 'n', log = 'x',
+         xlab = 'Replicates', ylab = 'Abundance')
 
     mcols <- viridis::magma(length(m))
     names(mcols) <- as.character(m)
@@ -58,7 +59,47 @@ plotByMonth <- function(X) {
 
 plotByMonth(beeAllDat[beeAllDat$spp == beeSpp[1], c('Month', 'abundance')])
 
+# loop over all month/species combos and see what distributions look like
+library(MASS)
+library(parallel)
 
+sppMonth <- unique(beeAllDat[, c('Month', 'spp')])
+
+logLikSppMonth <- mclapply(1:nrow(sppMonth),
+                           mc.cores = 10,
+                           FUN = function(i) {
+    sp <- sppMonth$spp[i]
+    m <- sppMonth$Month[i]
+
+    dat <- beeAllDat$abundance[beeAllDat$Month == m & beeAllDat$spp == sp]
+
+    nbfit <- try(fitdistr(dat, 'negative binomial'), silent = TRUE)
+    if('try-error' %in% class(nbfit)) {
+        nbfit <- rep(NA, 3)
+        names(nbfit) <- c('estimate.size', 'estimate.mu', 'loglik')
+    }
+    nbfit <- unlist(nbfit)[c('estimate.size', 'estimate.mu', 'loglik')]
+
+    pofit <- try(fitdistr(dat, 'poisson'), silent = TRUE)
+    if('try-error' %in% class(pofit)) {
+        pofit <- rep(NA, 2)
+        names(pofit) <- c('estimate.lambda', 'loglik')
+    }
+    pofit <- unlist(pofit)[c('estimate.lambda', 'loglik')]
+
+    return(c(nbfit, pofit))
+})
+
+logLikSppMonth <- do.call(rbind, logLikSppMonth)
+colnames(logLikSppMonth)[c(3, 5)] <- paste(colnames(logLikSppMonth)[c(3, 5)],
+                                           c('nb', 'po'), sep = '.')
+logLikSppMonth <- as.data.frame(logLikSppMonth, stringsAsFactors = FALSE)
+logLikSppMonth$aic.nb <- -2 * (logLikSppMonth$loglik.nb - 2)
+logLikSppMonth$aic.po <- -2 * (logLikSppMonth$loglik.po - 1)
+
+
+with(logLikSppMonth[logLikSppMonth$aic.nb < (logLikSppMonth$aic.po - 2), ],
+     plot(estimate.mu, estimate.size, log = 'xy'))
 
 
 
