@@ -28,10 +28,19 @@ beeAllDat$abundance[is.na(beeAllDat$abundance)] <- 0
 beeAllDat$Month <- beeAllDat$Month - 6.5
 
 # loop over each species
-sapply(beeSpp[1:3], function(n) {
-    dat <- beeAllDat[beeAllDat$spp == n, ]
-    try(fitGaus(dat$Month, dat$abundance))
+beeNBMLE <- mclapply(beeSpp, mc.cores = 10, FUN = function(s) {
+    dat <- beeAllDat[beeAllDat$spp == s, ]
+    o <- try(fitGausNB(dat$Month, dat$abundance))
+
+    if('try-error' %in% class(o)) {
+        o <- rep(NA, 6)
+    }
+
+    return(o)
 })
+
+beeNBMLE <- do.call(rbind, beeNBMLE)
+mean(beeNBMLE[, 'par2'] > 3.5, na.rm = TRUE)
 
 
 plot(beeAllDat[beeAllDat$spp == beeSpp[3], c('Month', 'abundance')], col = gray(0, alpha = 0.1), pch = 16)
@@ -98,8 +107,25 @@ logLikSppMonth$aic.nb <- -2 * (logLikSppMonth$loglik.nb - 2)
 logLikSppMonth$aic.po <- -2 * (logLikSppMonth$loglik.po - 1)
 
 
-with(logLikSppMonth[logLikSppMonth$aic.nb < (logLikSppMonth$aic.po - 2), ],
-     plot(estimate.mu, estimate.size, log = 'xy'))
+plot(logLikSppMonth[, c('estimate.mu', 'estimate.size')], log = 'xy', col = 'gray')
+points(logLikSppMonth[sppMonth$spp == beeSpp[13], c('estimate.mu', 'estimate.size')])
 
 
+library(socorro)
+library(viridis)
+with(logLikSppMonth[logLikSppMonth$aic.nb < (logLikSppMonth$aic.po - 0), ], {
+    # layout(matrix(1:2, nrow = 1))
+    # par(mar = c(3, 3, 0, 0) + 0.5, mgp = c(2, 0.75, 0))
+
+    plot(log(estimate.mu), log(estimate.size), #log = 'xy',
+         col = quantCol(aic.po - aic.nb, viridis(20), trans = 'log'))
+    # abline(lm(log(estimate.size) ~ (estimate.mu)))
+
+    # plot(sort(aic.po - aic.nb),
+    #      col = quantCol(sort(aic.po - aic.nb), viridis(20), trans = 'log'),
+    #      xlab = '', xaxt = 'n', ylab = 'PO_AIC - NB_AIC', log = 'y')
+})
+
+mean(logLikSppMonth$aic.nb < (logLikSppMonth$aic.po - 0), na.rm = TRUE)
+plot(sort(logLikSppMonth$aic.nb - logLikSppMonth$aic.po))
 
