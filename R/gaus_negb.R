@@ -30,3 +30,17 @@ fitGausNB <- function(x, y) {
 
     return(unlist(o[c('par', 'value', 'convergence')]))
 }
+
+
+
+aa <- c(40, 0.5, 1)
+k <- 10
+x <- rep(3:10, 25) - 6.5
+yhat <- gaus(x, aa[1], aa[2], aa[3])
+y <- rnbinom(length(x), size = k, mu = yhat)
+plot(x, y)
+
+gausNBLogLik(c(aa, k), x, y)
+
+fitGausNB(x, y)
+
