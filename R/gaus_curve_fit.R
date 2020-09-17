@@ -1,14 +1,20 @@
 library(data.table)
 
-source('R/gaus.R')
+source('R/gaus_pois.R')
+source('R/gaus_negb.R')
 
-beeSpp <- fread('data/Focus_Bees.csv')
-beeSpp <- unique(beeSpp$code)
+# beeSpp <- fread('data/Focus_Bees.csv')
+# beeSpp <- unique(beeSpp$code)
 beeAllDat <- fread('data/SEVBeeData2002-2015.csv')
 
 # reshape into long format
 beeAllDat <- melt(beeAllDat, id.vars = c('Month', 'Year', 'Ecosystem', 'Transect', 'Direction', 'Color'),
                   variable.name = 'spp', value.name = 'abundance', variable.factor = FALSE)
+
+
+# identify most abundant bees
+beeAbund <- tapply(beeAllDat$abundance, beeAllDat$spp, sum)
+beeSpp <- names(beeAbund[beeAbund >= 20])
 
 # subset to just focus species
 beeAllDat <- beeAllDat[beeAllDat$spp %in% beeSpp, ]
@@ -40,10 +46,44 @@ beeNBMLE <- mclapply(beeSpp, mc.cores = 10, FUN = function(s) {
 })
 
 beeNBMLE <- do.call(rbind, beeNBMLE)
-mean(beeNBMLE[, 'par2'] > 3.5, na.rm = TRUE)
 
 
-plot(beeAllDat[beeAllDat$spp == beeSpp[3], c('Month', 'abundance')], col = gray(0, alpha = 0.1), pch = 16)
+
+plotBee <- function(sp) {
+    x <- beeAllDat[beeAllDat$spp == sp, c('Month', 'abundance')]
+
+    y <- aggregate(list(n = x$abundance), list(Month = x$Month, abundance = x$abundance),
+                   length)
+    col <- quantCol(y$n, viridis(50), trans = 'log', xlim = c(1, 210))
+
+    layout(matrix(1:2, nrow = 1), widths = c(3, 1))
+
+    par(mar = c(2, 2, 1, 0) + 0.5, mgp = c(1.5, 0.5, 0), tcl = -0.25)
+    plot(y[, 1:2], col = col, pch = 16, ylim = c(0, 5))
+
+    a <- beeNBMLE[beeSpp == sp, ]
+    curve(sqrt(gaus(x, a[1], a[2], a[3])), add = TRUE)
+
+    mtext(sp)
+
+    # scale
+    par(mar = c(3, 1, 2, 3) + 0.5, mgp = c(2, 0.5, 0))
+    plot(rep(1, 210), 1:210, type = 'n', xlim = 0:1, xaxs = 'i', yaxs = 'i',
+         log = 'y', axes = FALSE, xlab = '')
+    rect(xleft = 0, xright = 1, ybottom = 0:209, ytop = 1:210,
+         col = quantCol(1:210, viridis(50), trans = 'log', xlim = c(1, 210)),
+         border = NA)
+    box()
+    logAxis(4)
+    mtext('Frequency', side = 4, line = 1.5)
+}
+
+pdf('all_pheno_gaus.pdf', width = 5, height = 4)
+for(i in beeSpp) {
+    print(i)
+    plotBee(i)
+}
+dev.off()
 
 
 plotByMonth <- function(X) {
